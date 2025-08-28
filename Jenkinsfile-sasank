@@ -1,0 +1,62 @@
+pipeline {
+    agent any
+    environment {
+        APP_NODE = "13.42.44.16"
+        SHH_KEY = "/home/ubuntu/.shh/sasank-key.pem"
+        SSH_USER = "ubuntu"
+
+    }
+    stages {
+        stage("Checkout Code") {
+            steps {
+                git url:'https://github.com/nvssasank/addressbook-cicd.git'
+                echo "Code cloned from Github respository"
+            }
+        }
+        stage("Compile Code"){
+            steps {
+                sh 'mvn clean compile'
+                echo "Compilatio completed"
+            }
+        }
+        stage("Run Tests") {
+            steps {
+                sh 'mvn test'
+                echo "Tests exucuted successfully"
+            }
+        }
+        stage("Package Appliaction"){
+            steps {
+                sh 'mvn package -DskipTests'
+                archiveArtifacts artifacts: 'target/*.war', fingerprint: true
+                echo "WAR file packaged and archived"
+            }
+        }
+        stage("Provision Tomcat with Ansible") {
+            steps {
+                writeFile file: 'inventory.ini', text:"""[appnode]
+                ${APP_NODE} ansible_user=${SSH_USER}
+                ansible_ssh_private_key_file=${SSH_KEY}"""
+                sh 'ansible-playbook -i inventory.ini ansible/install_tomcat.yml'
+            }
+        }
+        stage("Deploy to Tomcat") {
+            steps {
+                sh """
+                ansible -i inventory.ini appnode -m copy \\
+                  -a 'src=target/addressbook.war dest=/opt/tomcat/webapss/addressbook.war'
+                """
+                sh """
+                ansible -i inventory.ini appnode -m shell \\
+                   -a '/opt/tomcat/bin/shutdown.sh || trye: /opt/tomcat/bin/startup.sh'
+                """
+                echo "WAR deployed to Application Node Tomcat"
+            }
+        }
+        stage("Verify Deployemnt") {
+            steps {
+                echo "Access the app at htt://${APP_NODE}:8080/addressbook/"
+            }
+        }
+    }
+}
